@@ -8,6 +8,7 @@ from typing import Protocol
 class ModelRequest:
     messages: list[dict]
     system_prompt: str
+    model: str | None = None
     tool_schemas: list[dict] = field(default_factory=list)
     max_tokens: int = 1024
     temperature: float = 0.2
@@ -27,4 +28,3 @@ class ProviderAdapter(Protocol):
     def health(self) -> dict: ...
 
     def generate(self, req: ModelRequest) -> ModelResponse: ...
-

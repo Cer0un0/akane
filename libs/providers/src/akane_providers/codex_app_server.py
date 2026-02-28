@@ -46,6 +46,8 @@ class CodexAppServerAdapter:
             "max_output_tokens": req.max_tokens,
             "temperature": req.temperature,
         }
+        if req.model:
+            payload["model"] = req.model
 
         with httpx.Client(timeout=self.timeout_sec) as client:
             resp = client.post(f"{self.base_url}{self.api_path}", json=payload, headers=headers)
@@ -76,6 +78,8 @@ class CodexAppServerAdapter:
                     params={"type": "apiKey", "apiKey": self.token},
                 )
             thread_params: dict[str, object] = {"ephemeral": True}
+            if req.model:
+                thread_params["model"] = req.model
             if req.system_prompt:
                 thread_params["baseInstructions"] = req.system_prompt
             thread_result = self._rpc_call(ws, method="thread/start", params=thread_params)

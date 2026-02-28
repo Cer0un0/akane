@@ -15,6 +15,7 @@ class Settings(BaseSettings):
 
     bot_token: str = ""
     api_base_url: str = "http://akane-api:8080"
+    bot_api_timeout_sec: float = 15.0
     internal_api_token: str = ""
     redis_url: str = "redis://redis:6379/0"
 
@@ -120,7 +121,7 @@ async def on_message(message: discord.Message):
     }
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as http:
+        async with httpx.AsyncClient(timeout=settings.bot_api_timeout_sec) as http:
             headers = {
                 "Authorization": f"Bearer {settings.internal_api_token}",
             }
@@ -148,7 +149,7 @@ async def on_message(message: discord.Message):
                 reply = resp.json().get("reply_text", "No response text.")
                 await message.reply(reply)
     except Exception as exc:  # noqa: BLE001
-        await message.reply(f"bot error: {exc}")
+        await message.reply(f"bot error: {type(exc).__name__}: {exc}")
     finally:
         # Best-effort cleanup of thinking indicator.
         try:

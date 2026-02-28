@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     codex_api_path: str = "/v1/responses"
     codex_api_token: str = ""
     codex_auth_mode: str = "none"
+    llm_model: str = ""
     llm_total_timeout_sec: float = 20.0
 
 
@@ -85,6 +86,7 @@ def post_message(payload: MessageRequest):
     model_req = ModelRequest(
         messages=[{"role": "user", "content": payload.text}],
         system_prompt="You are akane. Reply concisely and helpfully.",
+        model=(settings.llm_model or None),
     )
     try:
         model_res = adapter.generate(model_req)
