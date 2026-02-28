@@ -44,6 +44,7 @@ class CodexAppServerAdapter:
             "input": req.messages,
             "instructions": req.system_prompt,
             "max_output_tokens": req.max_tokens,
+            "reasoning": {"effort": "low"},
         }
         if req.model:
             payload["model"] = req.model

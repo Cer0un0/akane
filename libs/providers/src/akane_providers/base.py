@@ -10,7 +10,7 @@ class ModelRequest:
     system_prompt: str
     model: str | None = None
     tool_schemas: list[dict] = field(default_factory=list)
-    max_tokens: int = 1024
+    max_tokens: int = 16384
     temperature: float = 0.2
     metadata: dict = field(default_factory=dict)
 

@@ -235,9 +235,10 @@ def post_message(payload: MessageRequest):
     except Exception as exc:  # noqa: BLE001
         reply_text = f"provider error: {exc}"
 
-    # 3. Save user message and assistant reply to Redis
+    # 3. Save user message and assistant reply to Redis (skip empty)
     _save_history(guild, "user", payload.text, user_id)
-    _save_history(guild, "assistant", reply_text)
+    if reply_text != "(empty response)":
+        _save_history(guild, "assistant", reply_text)
 
     # 4. Append to Markdown log
     _append_markdown_log(session_parts, payload.text, reply_text)
