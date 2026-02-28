@@ -186,7 +186,7 @@ When you don't know something, say so directly.
 """
 
 # Workspace MD files injected into system prompt (in order)
-_WORKSPACE_MD_FILES = ["SOUL.md", "AGENTS.md", "IDENTITY.md", "USER.md", "TOOLS.md", "MEMORY.md"]
+_WORKSPACE_MD_FILES = ["SOUL.md", "AGENTS.md", "IDENTITY.md", "USER.md", "TOOLS.md", "HEARTBEAT.md", "MEMORY.md"]
 
 # Tag patterns for workspace file updates — one simple tag per file
 _WS_FILE_TAGS: dict[str, str] = {
@@ -195,6 +195,7 @@ _WS_FILE_TAGS: dict[str, str] = {
     "IDENTITY.md": "identity_update",
     "USER.md": "user_update",
     "TOOLS.md": "tools_update",
+    "HEARTBEAT.md": "heartbeat_update",
 }
 _WS_TAG_RE: dict[str, re.Pattern[str]] = {
     filename: re.compile(
@@ -225,7 +226,10 @@ _WS_UPDATE_INSTRUCTION = (
     "- IDENTITY.md を書き換え → <identity_update>全文</identity_update>\n"
     "- USER.md を書き換え → <user_update>全文</user_update>\n"
     "- TOOLS.md を書き換え → <tools_update>全文</tools_update>\n"
+    "- HEARTBEAT.md を書き換え → <heartbeat_update>全文</heartbeat_update>\n"
     "- MEMORY.md に追記 → <memory_append>追記内容</memory_append>\n\n"
+    "HEARTBEAT.md はリマインダーや定期チェック用。ユーザーが「朝9時に起こして」"
+    "「毎日〜を確認して」等と言ったらここに書く。\n\n"
     "ルール:\n"
     "1. タグの中にはファイルの内容だけを書く。会話文や確認の質問は絶対に含めない\n"
     "2. タグはユーザーには見えない。システムが自動処理する\n"
