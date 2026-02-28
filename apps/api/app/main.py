@@ -188,11 +188,20 @@ When you don't know something, say so directly.
 # Workspace MD files injected into system prompt (in order)
 _WORKSPACE_MD_FILES = ["SOUL.md", "AGENTS.md", "IDENTITY.md", "USER.md", "TOOLS.md", "MEMORY.md"]
 
-# Tag patterns for workspace file updates
-_WS_UPDATE_RE = re.compile(
-    r"<ws_update\s+path=[\"']([A-Z_]+\.md)[\"']\s*>\s*(.*?)\s*</ws_update>",
-    re.DOTALL,
-)
+# Tag patterns for workspace file updates — one simple tag per file
+_WS_FILE_TAGS: dict[str, str] = {
+    "SOUL.md": "soul_update",
+    "AGENTS.md": "agents_update",
+    "IDENTITY.md": "identity_update",
+    "USER.md": "user_update",
+    "TOOLS.md": "tools_update",
+}
+_WS_TAG_RE: dict[str, re.Pattern[str]] = {
+    filename: re.compile(
+        rf"<{tag}>\s*(.*?)\s*</{tag}>", re.DOTALL
+    )
+    for filename, tag in _WS_FILE_TAGS.items()
+}
 _MEMORY_APPEND_RE = re.compile(
     r"<memory_append>\s*(.*?)\s*</memory_append>",
     re.DOTALL,
@@ -200,16 +209,18 @@ _MEMORY_APPEND_RE = re.compile(
 
 _WS_UPDATE_INSTRUCTION = (
     "\n\n---\n"
-    "## Workspace file editing\n\n"
-    "You manage your own configuration files in /workspace. "
-    "When the user asks you to update one of these files, output the change "
-    "at the END of your reply using the appropriate tag:\n\n"
-    "- To REPLACE a file (SOUL.md, AGENTS.md, IDENTITY.md, USER.md, TOOLS.md): "
-    'use `<ws_update path="FILENAME.md">...full new content...</ws_update>`\n'
-    "- To APPEND to MEMORY.md: "
-    "use `<memory_append>...new entry...</memory_append>`\n\n"
-    "Always include your conversational response BEFORE the tags. "
-    "The tags will be stripped from the reply shown to the user."
+    "## ファイル編集\n\n"
+    "あなたは /workspace の設定ファイルを自分で管理している。\n"
+    "ユーザーに頼まれたら、返答の最後にタグを付けて即座に書き換えること。確認は不要。\n\n"
+    "ファイル全体を置き換えるタグ:\n"
+    "- SOUL.md → `<soul_update>新しい内容</soul_update>`\n"
+    "- AGENTS.md → `<agents_update>新しい内容</agents_update>`\n"
+    "- IDENTITY.md → `<identity_update>新しい内容</identity_update>`\n"
+    "- USER.md → `<user_update>新しい内容</user_update>`\n"
+    "- TOOLS.md → `<tools_update>新しい内容</tools_update>`\n\n"
+    "MEMORY.md に追記:\n"
+    "- `<memory_append>追記内容</memory_append>`\n\n"
+    "会話の返答を先に書き、タグは末尾に置くこと。タグはユーザーには見えない。"
 )
 
 
@@ -248,19 +259,19 @@ def _build_system_prompt() -> str:
 
 def _process_ws_updates(reply_text: str) -> str:
     """Extract and apply workspace file update tags from LLM response."""
-    # Process <ws_update path="FILENAME.md"> tags (full replacement)
-    for match in _WS_UPDATE_RE.finditer(reply_text):
-        filename = match.group(1)
-        new_content = match.group(2).strip()
-        if new_content and filename in _WORKSPACE_MD_FILES:
-            filepath = Path(settings.workspace_dir) / filename
-            try:
-                filepath.parent.mkdir(parents=True, exist_ok=True)
-                filepath.write_text(new_content + "\n", encoding="utf-8")
-                logger.info("%s updated (%d chars)", filename, len(new_content))
-            except Exception:  # noqa: BLE001
-                logger.warning("failed to write %s", filename, exc_info=True)
-    reply_text = _WS_UPDATE_RE.sub("", reply_text)
+    # Process per-file tags (full replacement)
+    for filename, pattern in _WS_TAG_RE.items():
+        for match in pattern.finditer(reply_text):
+            new_content = match.group(1).strip()
+            if new_content:
+                filepath = Path(settings.workspace_dir) / filename
+                try:
+                    filepath.parent.mkdir(parents=True, exist_ok=True)
+                    filepath.write_text(new_content + "\n", encoding="utf-8")
+                    logger.info("%s updated (%d chars)", filename, len(new_content))
+                except Exception:  # noqa: BLE001
+                    logger.warning("failed to write %s", filename, exc_info=True)
+        reply_text = pattern.sub("", reply_text)
 
     # Process <memory_append> tags (append to MEMORY.md)
     for match in _MEMORY_APPEND_RE.finditer(reply_text):
