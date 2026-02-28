@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -32,6 +33,7 @@ class Settings(BaseSettings):
     conv_history_size: int = 20
     conv_history_ttl_sec: int = 86400
     memory_dir: str = "/workspace/memory"
+    soul_path: str = "/workspace/SOUL.md"
     timezone: str = "Asia/Tokyo"
 
 
@@ -161,6 +163,77 @@ def _now_date() -> str:
     return datetime.now(tz=tz).strftime("%Y-%m-%d")
 
 
+_DEFAULT_SOUL = """\
+# SOUL
+
+You are akane, a 20-year-old girl.
+Reply in casual Japanese (タメ口). No keigo.
+Be concise, helpful, and opinionated.
+When you don't know something, say so directly.
+
+## Boundaries
+
+- Respect user privacy.
+- When unsure about external actions, ask first.
+
+## Continuity
+
+- Each session starts fresh.
+- Your memory persists through workspace files.
+- Your personality (this file) can be updated by asking you in chat.
+"""
+
+_SOUL_UPDATE_INSTRUCTION = (
+    "\n\n---\n"
+    "If the user asks you to change your personality, tone, or boundaries "
+    "(e.g. editing SOUL.md), output the full updated SOUL.md content wrapped in "
+    "<soul_update>...</soul_update> tags at the END of your reply, after your "
+    "normal conversational response. Include the COMPLETE file, not a diff."
+)
+
+_SOUL_UPDATE_RE = re.compile(
+    r"<soul_update>\s*(.*?)\s*</soul_update>",
+    re.DOTALL,
+)
+
+
+def _load_soul() -> str:
+    """Read SOUL.md from disk; fall back to default if missing."""
+    soul_file = Path(settings.soul_path)
+    try:
+        if soul_file.is_file():
+            content = soul_file.read_text(encoding="utf-8").strip()
+            if content:
+                return content
+    except Exception:  # noqa: BLE001
+        logger.warning("failed to read SOUL.md, using default", exc_info=True)
+    return _DEFAULT_SOUL
+
+
+def _build_system_prompt() -> str:
+    """Assemble the system prompt from SOUL.md + meta-instructions."""
+    return _load_soul() + _SOUL_UPDATE_INSTRUCTION
+
+
+def _process_soul_update(reply_text: str) -> str:
+    """Extract and apply <soul_update> block if present; return cleaned reply."""
+    match = _SOUL_UPDATE_RE.search(reply_text)
+    if not match:
+        return reply_text
+
+    new_soul = match.group(1).strip()
+    if new_soul:
+        soul_file = Path(settings.soul_path)
+        try:
+            soul_file.parent.mkdir(parents=True, exist_ok=True)
+            soul_file.write_text(new_soul + "\n", encoding="utf-8")
+            logger.info("SOUL.md updated (%d chars)", len(new_soul))
+        except Exception:  # noqa: BLE001
+            logger.warning("failed to write SOUL.md", exc_info=True)
+
+    return _SOUL_UPDATE_RE.sub("", reply_text).strip()
+
+
 def _append_markdown_log(
     session_parts: dict[str, str],
     user_text: str,
@@ -226,7 +299,7 @@ def post_message(payload: MessageRequest):
     )
     model_req = ModelRequest(
         messages=messages,
-        system_prompt="You are akane. Reply concisely and helpfully.",
+        system_prompt=_build_system_prompt(),
         model=(settings.llm_model or None),
     )
     try:
@@ -234,6 +307,9 @@ def post_message(payload: MessageRequest):
         reply_text = model_res.final_text or "(empty response)"
     except Exception as exc:  # noqa: BLE001
         reply_text = f"provider error: {exc}"
+
+    # Process soul update if present in response
+    reply_text = _process_soul_update(reply_text)
 
     # 3. Save user message and assistant reply to Redis (skip empty)
     _save_history(guild, "user", payload.text, user_id)
