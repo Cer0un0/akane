@@ -227,7 +227,7 @@ _WS_UPDATE_INSTRUCTION = (
     "- TOOLS.md を書き換え → <tools_update>全文</tools_update>\n"
     "- MEMORY.md に追記 → <memory_append>追記内容</memory_append>\n\n"
     "ルール:\n"
-    "1. タグの中にはファイルの完全な新しい内容を書く\n"
+    "1. タグの中にはファイルの内容だけを書く。会話文や確認の質問は絶対に含めない\n"
     "2. タグはユーザーには見えない。システムが自動処理する\n"
     "3. 確認せず即座にタグを出力すること\n"
     "4. 会話の返答を先に書き、タグは必ず末尾に置く"
@@ -267,12 +267,39 @@ def _build_system_prompt() -> str:
     return "\n\n".join(sections) + _WS_UPDATE_INSTRUCTION
 
 
+_TRAILING_CHAT_RE = re.compile(
+    r"\n+(?:この|この草案|以上|OK|上記|どう|変更|追加|修正|確認|それ|何か|他に).*$",
+    re.DOTALL,
+)
+
+
+def _clean_tag_content(content: str) -> str:
+    """Remove trailing conversational text that leaked into tag content."""
+    # Strip lines at the end that look like chat (end with ？ or are short questions)
+    lines = content.rstrip().split("\n")
+    while lines:
+        last = lines[-1].strip()
+        if not last:
+            lines.pop()
+            continue
+        # Remove lines ending with ？ (conversational questions)
+        if last.endswith("？") or last.endswith("?"):
+            lines.pop()
+            continue
+        # Remove common conversational patterns
+        if _TRAILING_CHAT_RE.match("\n" + last):
+            lines.pop()
+            continue
+        break
+    return "\n".join(lines).strip()
+
+
 def _process_ws_updates(reply_text: str) -> str:
     """Extract and apply workspace file update tags from LLM response."""
     # Process per-file tags (full replacement)
     for filename, pattern in _WS_TAG_RE.items():
         for match in pattern.finditer(reply_text):
-            new_content = match.group(1).strip()
+            new_content = _clean_tag_content(match.group(1))
             if new_content:
                 filepath = Path(settings.workspace_dir) / filename
                 try:
