@@ -8,6 +8,9 @@ WORKDIR /app
 
 RUN pip install --no-cache-dir uv
 
+# Install CPU-only torch first to avoid pulling the 2GB+ CUDA bundle
+RUN uv pip install --system torch --index-url https://download.pytorch.org/whl/cpu
+
 COPY libs/core /app/libs/core
 COPY libs/providers /app/libs/providers
 COPY apps/worker /app/apps/worker
