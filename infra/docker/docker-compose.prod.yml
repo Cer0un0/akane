@@ -1,0 +1,8 @@
+services:
+  akane-worker:
+    build:
+      args:
+        PRELOAD_EMBEDDING: "true"
+    environment:
+      - AKANE_LOG_LEVEL=INFO
+

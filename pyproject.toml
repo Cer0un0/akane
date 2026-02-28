@@ -1,0 +1,24 @@
+[project]
+name = "akane-workspace"
+version = "0.1.0"
+description = "akane monorepo workspace"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.uv.workspace]
+members = [
+  "apps/api",
+  "apps/bot",
+  "apps/worker",
+  "apps/scheduler",
+  "libs/core",
+  "libs/providers",
+]
+
+[tool.uv.sources]
+akane-api = { workspace = true }
+akane-bot = { workspace = true }
+akane-worker = { workspace = true }
+akane-scheduler = { workspace = true }
+akane-core = { workspace = true }
+akane-providers = { workspace = true }

@@ -1,0 +1,14 @@
+services:
+  akane-api:
+    environment:
+      - AKANE_LOG_LEVEL=DEBUG
+  akane-bot:
+    environment:
+      - AKANE_LOG_LEVEL=DEBUG
+  akane-worker:
+    environment:
+      - AKANE_LOG_LEVEL=DEBUG
+  akane-scheduler:
+    environment:
+      - AKANE_LOG_LEVEL=DEBUG
+

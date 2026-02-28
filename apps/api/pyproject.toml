@@ -1,0 +1,21 @@
+[project]
+name = "akane-api"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115.0",
+  "httpx>=0.28.0",
+  "pydantic-settings>=2.7.0",
+  "redis>=5.2.0",
+  "structlog>=25.0.0",
+  "uvicorn[standard]>=0.34.0",
+  "akane-core",
+  "akane-providers",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]

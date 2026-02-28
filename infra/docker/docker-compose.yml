@@ -1,0 +1,99 @@
+services:
+  akane-api:
+    build:
+      context: ../..
+      dockerfile: apps/api/Dockerfile
+    env_file: .env
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  akane-bot:
+    build:
+      context: ../..
+      dockerfile: apps/bot/Dockerfile
+    env_file: .env
+    restart: unless-stopped
+    depends_on:
+      akane-api:
+        condition: service_healthy
+
+  akane-worker:
+    build:
+      context: ../..
+      dockerfile: apps/worker/Dockerfile
+      args:
+        PRELOAD_EMBEDDING: "false"
+    env_file: .env
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    read_only: true
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - TRANSFORMERS_CACHE=/tmp/models
+    tmpfs:
+      - /tmp
+      - /app/__pycache__
+      - /root/.cache
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ../workspace:/workspace
+
+  akane-scheduler:
+    build:
+      context: ../..
+      dockerfile: apps/scheduler/Dockerfile
+    env_file: .env
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-akane}
+      POSTGRES_USER: ${POSTGRES_USER:-akane}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-akane}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+networks:
+  default:
+    name: akane-internal
+
+volumes:
+  pgdata:
+  redisdata:
+
