@@ -138,7 +138,7 @@ async def on_message(message: discord.Message):
                 )
                 job_resp.raise_for_status()
                 job = job_resp.json()
-                await message.reply(f"queued: {job.get('job_id')}")
+                await message.channel.send(f"queued: {job.get('job_id')}")
             else:
                 resp = await http.post(
                     f"{settings.api_base_url}/v1/messages",
@@ -147,9 +147,9 @@ async def on_message(message: discord.Message):
                 )
                 resp.raise_for_status()
                 reply = resp.json().get("reply_text", "No response text.")
-                await message.reply(reply)
+                await message.channel.send(reply)
     except Exception as exc:  # noqa: BLE001
-        await message.reply(f"bot error: {type(exc).__name__}: {exc}")
+        await message.channel.send(f"bot error: {type(exc).__name__}: {exc}")
     finally:
         # Best-effort cleanup of thinking indicator.
         try:
