@@ -260,6 +260,10 @@ def _load_soul() -> str:
 def _build_system_prompt() -> str:
     """Assemble the system prompt from workspace MD files + meta-instructions."""
     sections: list[str] = []
+
+    # Inject current date/time so the LLM knows "today"
+    sections.append(f"<!-- datetime -->\n現在: {_now_iso()}")
+
     for filename in _WORKSPACE_MD_FILES:
         if filename == "SOUL.md":
             content = _load_soul()
@@ -444,12 +448,15 @@ def post_heartbeat():
         return {"status": "skipped", "reason": "HEARTBEAT.md is empty or missing"}
 
     soul = _load_soul()
+    now = _now_iso()
     prompt = (
+        f"現在: {now}\n\n"
         f"{soul}\n\n---\n"
         "You are running a periodic heartbeat check. "
         "Review the following HEARTBEAT.md checklist and execute it.\n"
-        "If everything is fine, respond with just: HEARTBEAT_OK\n"
-        "If there is something to report, describe it concisely.\n\n"
+        f"Current time: {now}\n"
+        "If there is a reminder whose time has come, output the reminder message.\n"
+        "If no reminders are due right now, respond with just: HEARTBEAT_OK\n\n"
         f"## HEARTBEAT.md\n\n{heartbeat_content}"
     )
 
