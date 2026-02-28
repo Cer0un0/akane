@@ -1,0 +1,32 @@
+services:
+  codex-app-server:
+    build:
+      context: ../..
+      dockerfile: infra/docker/codex-app-server/Dockerfile
+    restart: unless-stopped
+    environment:
+      - CODEX_HOME=/var/lib/codex
+      - OPENAI_API_KEY=${AKANE_CODEX_API_TOKEN:-}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "const s=require('net').connect(4000,'127.0.0.1',()=>{s.end();process.exit(0)});s.on('error',()=>process.exit(1));",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - codex-home:/var/lib/codex
+
+  akane-api:
+    environment:
+      - AKANE_CODEX_BASE_URL=${AKANE_CODEX_BASE_URL:-ws://codex-app-server:4000}
+    depends_on:
+      codex-app-server:
+        condition: service_healthy
+
+volumes:
+  codex-home:
