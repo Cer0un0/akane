@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     memory_dir: str = "/workspace/memory"
     soul_path: str = "/workspace/SOUL.md"
     heartbeat_path: str = "/workspace/HEARTBEAT.md"
+    workspace_dir: str = "/workspace"
     timezone: str = "Asia/Tokyo"
 
 
@@ -184,55 +185,98 @@ When you don't know something, say so directly.
 - Your personality (this file) can be updated by asking you in chat.
 """
 
-_SOUL_UPDATE_INSTRUCTION = (
-    "\n\n---\n"
-    "If the user asks you to change your personality, tone, or boundaries "
-    "(e.g. editing SOUL.md), output the full updated SOUL.md content wrapped in "
-    "<soul_update>...</soul_update> tags at the END of your reply, after your "
-    "normal conversational response. Include the COMPLETE file, not a diff."
-)
+# Workspace MD files injected into system prompt (in order)
+_WORKSPACE_MD_FILES = ["SOUL.md", "AGENTS.md", "IDENTITY.md", "USER.md", "TOOLS.md", "MEMORY.md"]
 
-_SOUL_UPDATE_RE = re.compile(
-    r"<soul_update>\s*(.*?)\s*</soul_update>",
+# Tag patterns for workspace file updates
+_WS_UPDATE_RE = re.compile(
+    r"<ws_update\s+path=[\"']([A-Z_]+\.md)[\"']\s*>\s*(.*?)\s*</ws_update>",
     re.DOTALL,
 )
+_MEMORY_APPEND_RE = re.compile(
+    r"<memory_append>\s*(.*?)\s*</memory_append>",
+    re.DOTALL,
+)
+
+_WS_UPDATE_INSTRUCTION = (
+    "\n\n---\n"
+    "## Workspace file editing\n\n"
+    "You manage your own configuration files in /workspace. "
+    "When the user asks you to update one of these files, output the change "
+    "at the END of your reply using the appropriate tag:\n\n"
+    "- To REPLACE a file (SOUL.md, AGENTS.md, IDENTITY.md, USER.md, TOOLS.md): "
+    'use `<ws_update path="FILENAME.md">...full new content...</ws_update>`\n'
+    "- To APPEND to MEMORY.md: "
+    "use `<memory_append>...new entry...</memory_append>`\n\n"
+    "Always include your conversational response BEFORE the tags. "
+    "The tags will be stripped from the reply shown to the user."
+)
+
+
+def _load_workspace_file(filename: str) -> str:
+    """Read a workspace MD file; return empty string if missing."""
+    filepath = Path(settings.workspace_dir) / filename
+    try:
+        if filepath.is_file():
+            content = filepath.read_text(encoding="utf-8").strip()
+            if content:
+                return content
+    except Exception:  # noqa: BLE001
+        logger.warning("failed to read %s", filename, exc_info=True)
+    return ""
 
 
 def _load_soul() -> str:
     """Read SOUL.md from disk; fall back to default if missing."""
-    soul_file = Path(settings.soul_path)
-    try:
-        if soul_file.is_file():
-            content = soul_file.read_text(encoding="utf-8").strip()
-            if content:
-                return content
-    except Exception:  # noqa: BLE001
-        logger.warning("failed to read SOUL.md, using default", exc_info=True)
-    return _DEFAULT_SOUL
+    content = _load_workspace_file("SOUL.md")
+    return content or _DEFAULT_SOUL
 
 
 def _build_system_prompt() -> str:
-    """Assemble the system prompt from SOUL.md + meta-instructions."""
-    return _load_soul() + _SOUL_UPDATE_INSTRUCTION
+    """Assemble the system prompt from workspace MD files + meta-instructions."""
+    sections: list[str] = []
+    for filename in _WORKSPACE_MD_FILES:
+        if filename == "SOUL.md":
+            content = _load_soul()
+        else:
+            content = _load_workspace_file(filename)
+        if content:
+            sections.append(f"<!-- {filename} -->\n{content}")
+
+    return "\n\n".join(sections) + _WS_UPDATE_INSTRUCTION
 
 
-def _process_soul_update(reply_text: str) -> str:
-    """Extract and apply <soul_update> block if present; return cleaned reply."""
-    match = _SOUL_UPDATE_RE.search(reply_text)
-    if not match:
-        return reply_text
+def _process_ws_updates(reply_text: str) -> str:
+    """Extract and apply workspace file update tags from LLM response."""
+    # Process <ws_update path="FILENAME.md"> tags (full replacement)
+    for match in _WS_UPDATE_RE.finditer(reply_text):
+        filename = match.group(1)
+        new_content = match.group(2).strip()
+        if new_content and filename in _WORKSPACE_MD_FILES:
+            filepath = Path(settings.workspace_dir) / filename
+            try:
+                filepath.parent.mkdir(parents=True, exist_ok=True)
+                filepath.write_text(new_content + "\n", encoding="utf-8")
+                logger.info("%s updated (%d chars)", filename, len(new_content))
+            except Exception:  # noqa: BLE001
+                logger.warning("failed to write %s", filename, exc_info=True)
+    reply_text = _WS_UPDATE_RE.sub("", reply_text)
 
-    new_soul = match.group(1).strip()
-    if new_soul:
-        soul_file = Path(settings.soul_path)
-        try:
-            soul_file.parent.mkdir(parents=True, exist_ok=True)
-            soul_file.write_text(new_soul + "\n", encoding="utf-8")
-            logger.info("SOUL.md updated (%d chars)", len(new_soul))
-        except Exception:  # noqa: BLE001
-            logger.warning("failed to write SOUL.md", exc_info=True)
+    # Process <memory_append> tags (append to MEMORY.md)
+    for match in _MEMORY_APPEND_RE.finditer(reply_text):
+        new_entry = match.group(1).strip()
+        if new_entry:
+            mem_file = Path(settings.workspace_dir) / "MEMORY.md"
+            try:
+                mem_file.parent.mkdir(parents=True, exist_ok=True)
+                with mem_file.open("a", encoding="utf-8") as f:
+                    f.write(f"\n{new_entry}\n")
+                logger.info("MEMORY.md appended (%d chars)", len(new_entry))
+            except Exception:  # noqa: BLE001
+                logger.warning("failed to append to MEMORY.md", exc_info=True)
+    reply_text = _MEMORY_APPEND_RE.sub("", reply_text)
 
-    return _SOUL_UPDATE_RE.sub("", reply_text).strip()
+    return reply_text.strip()
 
 
 def _append_markdown_log(
@@ -309,8 +353,8 @@ def post_message(payload: MessageRequest):
     except Exception as exc:  # noqa: BLE001
         reply_text = f"provider error: {exc}"
 
-    # Process soul update if present in response
-    reply_text = _process_soul_update(reply_text)
+    # Process workspace file updates if present in response
+    reply_text = _process_ws_updates(reply_text)
 
     # 3. Save user message and assistant reply to Redis (skip empty)
     _save_history(guild, "user", payload.text, user_id)
