@@ -44,15 +44,30 @@ class CodexAppServerAdapter:
             "input": req.messages,
             "instructions": req.system_prompt,
             "max_output_tokens": req.max_tokens,
-            "temperature": req.temperature,
         }
         if req.model:
             payload["model"] = req.model
 
         with httpx.Client(timeout=self.timeout_sec) as client:
-            resp = client.post(f"{self.base_url}{self.api_path}", json=payload, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
+            try:
+                resp = client.post(f"{self.base_url}{self.api_path}", json=payload, headers=headers)
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                body = (exc.response.text or "").strip()
+                if len(body) > 600:
+                    body = body[:600] + "..."
+                status = exc.response.status_code
+                detail = f"HTTP {status}"
+                if body:
+                    detail += f" body={body}"
+                raise RuntimeError(detail) from exc
+            except httpx.HTTPError as exc:
+                raise RuntimeError(f"HTTP request failed: {exc}") from exc
+
+            try:
+                data = resp.json()
+            except ValueError as exc:
+                raise RuntimeError("HTTP response was not valid JSON") from exc
         text = self._extract_text(data)
         return ModelResponse(final_text=text, usage=data.get("usage", {}))
 
