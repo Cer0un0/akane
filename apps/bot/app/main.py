@@ -148,8 +148,15 @@ async def on_message(message: discord.Message):
                     headers=headers,
                 )
                 resp.raise_for_status()
-                reply = resp.json().get("reply_text", "No response text.")
+                data = resp.json()
+                reply = data.get("reply_text", "No response text.")
                 await message.channel.send(reply)
+                # Add ⏰ if HEARTBEAT.md was updated (reminder/cron set)
+                if "HEARTBEAT.md" in data.get("ws_updates", []):
+                    try:
+                        await message.add_reaction("⏰")
+                    except discord.HTTPException:
+                        pass
     except Exception as exc:  # noqa: BLE001
         await message.channel.send(f"bot error: {type(exc).__name__}: {exc}")
     finally:

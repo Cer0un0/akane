@@ -302,8 +302,13 @@ def _clean_tag_content(content: str) -> str:
     return "\n".join(lines).strip()
 
 
-def _process_ws_updates(reply_text: str) -> str:
-    """Extract and apply workspace file update tags from LLM response."""
+def _process_ws_updates(reply_text: str) -> tuple[str, list[str]]:
+    """Extract and apply workspace file update tags from LLM response.
+
+    Returns (cleaned_reply_text, list_of_updated_filenames).
+    """
+    updated_files: list[str] = []
+
     # Process per-file tags (full replacement)
     for filename, pattern in _WS_TAG_RE.items():
         for match in pattern.finditer(reply_text):
@@ -314,6 +319,7 @@ def _process_ws_updates(reply_text: str) -> str:
                     filepath.parent.mkdir(parents=True, exist_ok=True)
                     filepath.write_text(new_content + "\n", encoding="utf-8")
                     logger.info("%s updated (%d chars)", filename, len(new_content))
+                    updated_files.append(filename)
                 except Exception:  # noqa: BLE001
                     logger.warning("failed to write %s", filename, exc_info=True)
         reply_text = pattern.sub("", reply_text)
@@ -328,11 +334,12 @@ def _process_ws_updates(reply_text: str) -> str:
                 with mem_file.open("a", encoding="utf-8") as f:
                     f.write(f"\n{new_entry}\n")
                 logger.info("MEMORY.md appended (%d chars)", len(new_entry))
+                updated_files.append("MEMORY.md")
             except Exception:  # noqa: BLE001
                 logger.warning("failed to append to MEMORY.md", exc_info=True)
     reply_text = _MEMORY_APPEND_RE.sub("", reply_text)
 
-    return reply_text.strip()
+    return reply_text.strip(), updated_files
 
 
 def _append_markdown_log(
@@ -410,7 +417,7 @@ def post_message(payload: MessageRequest):
         reply_text = f"provider error: {exc}"
 
     # Process workspace file updates if present in response
-    reply_text = _process_ws_updates(reply_text)
+    reply_text, ws_updates = _process_ws_updates(reply_text)
 
     # 3. Save user message and assistant reply to Redis (skip empty)
     _save_history(guild, "user", payload.text, user_id)
@@ -424,6 +431,7 @@ def post_message(payload: MessageRequest):
         "status": "ok",
         "session_id": str(uuid4()),
         "reply_text": reply_text,
+        "ws_updates": ws_updates,
         "mode": "sync",
         "tool_events": [],
         "trace_id": f"tr_{uuid4().hex[:12]}",
