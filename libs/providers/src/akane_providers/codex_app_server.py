@@ -225,10 +225,12 @@ class CodexAppServerAdapter:
 
     @staticmethod
     def _extract_text(data: dict) -> str:
-        if data.get("output_text"):
-            return str(data["output_text"])
-        if data.get("text"):
-            return str(data["text"])
+        output_text = data.get("output_text")
+        if isinstance(output_text, str) and output_text:
+            return output_text
+        text = data.get("text")
+        if isinstance(text, str) and text:
+            return text
 
         # responses-style payload compatibility
         outputs = data.get("output")
