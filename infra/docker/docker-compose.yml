@@ -12,6 +12,8 @@ services:
         condition: service_healthy
     ports:
       - "8080:8080"
+    volumes:
+      - ../workspace:/workspace
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')"]
       interval: 10s

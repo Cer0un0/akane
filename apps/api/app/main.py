@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
+from datetime import datetime, timezone
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
@@ -11,6 +14,8 @@ from redis import Redis
 
 from akane_providers.base import ModelRequest
 from akane_providers.codex_app_server import CodexAppServerAdapter
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -24,6 +29,10 @@ class Settings(BaseSettings):
     codex_auth_mode: str = "none"
     llm_model: str = ""
     llm_total_timeout_sec: float = 20.0
+    conv_history_size: int = 20
+    conv_history_ttl_sec: int = 86400
+    memory_dir: str = "/workspace/memory"
+    timezone: str = "Asia/Tokyo"
 
 
 settings = Settings()
@@ -75,8 +84,140 @@ def readyz():
     return {"status": "ready"}
 
 
+def _parse_session_key(session_key: str) -> dict[str, str]:
+    """Parse 'g123:c456:t789:u999' into component dict."""
+    parts = session_key.split(":")
+    result: dict[str, str] = {}
+    for part in parts:
+        if part.startswith("g"):
+            result["guild"] = part
+        elif part.startswith("c"):
+            result["channel"] = part
+        elif part.startswith("t"):
+            result["thread"] = part
+        elif part.startswith("u"):
+            result["user"] = part
+    return result
+
+
+def _conv_redis_key(guild: str) -> str:
+    return f"akane:conv:{guild}"
+
+
+def _load_history(guild: str) -> list[dict]:
+    """Load recent conversation history from Redis."""
+    key = _conv_redis_key(guild)
+    raw_items = redis_client.lrange(key, 0, settings.conv_history_size - 1)
+    # lrange returns newest-first (lpush), reverse to chronological order
+    messages = []
+    for raw in reversed(raw_items):
+        try:
+            entry = json.loads(raw)
+            messages.append({"role": entry["role"], "content": entry["content"]})
+        except (json.JSONDecodeError, KeyError):
+            continue
+    return messages
+
+
+def _save_history(guild: str, role: str, content: str, user_id: str = "") -> None:
+    """Push a message to the Redis conversation list."""
+    key = _conv_redis_key(guild)
+    entry = json.dumps(
+        {"role": role, "content": content, "user_id": user_id, "ts": _now_iso()},
+        ensure_ascii=False,
+    )
+    redis_client.lpush(key, entry)
+    redis_client.ltrim(key, 0, settings.conv_history_size * 2 - 1)
+    redis_client.expire(key, settings.conv_history_ttl_sec)
+
+
+def _now_iso() -> str:
+    try:
+        import zoneinfo
+
+        tz = zoneinfo.ZoneInfo(settings.timezone)
+    except Exception:  # noqa: BLE001
+        tz = timezone.utc
+    return datetime.now(tz=tz).isoformat(timespec="seconds")
+
+
+def _now_hhmm() -> str:
+    try:
+        import zoneinfo
+
+        tz = zoneinfo.ZoneInfo(settings.timezone)
+    except Exception:  # noqa: BLE001
+        tz = timezone.utc
+    return datetime.now(tz=tz).strftime("%H:%M")
+
+
+def _now_date() -> str:
+    try:
+        import zoneinfo
+
+        tz = zoneinfo.ZoneInfo(settings.timezone)
+    except Exception:  # noqa: BLE001
+        tz = timezone.utc
+    return datetime.now(tz=tz).strftime("%Y-%m-%d")
+
+
+def _append_markdown_log(
+    session_parts: dict[str, str],
+    user_text: str,
+    reply_text: str,
+) -> None:
+    """Append conversation to daily Markdown file."""
+    try:
+        memory_dir = Path(settings.memory_dir)
+        memory_dir.mkdir(parents=True, exist_ok=True)
+        date_str = _now_date()
+        filepath = memory_dir / f"{date_str}.md"
+
+        conv_label = ":".join(
+            filter(None, [
+                session_parts.get("guild", ""),
+                session_parts.get("channel", ""),
+                session_parts.get("thread", ""),
+            ])
+        )
+        user_id = session_parts.get("user", "")
+        time_str = _now_hhmm()
+
+        block = f"\n### {time_str}\n\n"
+        block += f"**user ({user_id}):** {user_text}\n\n"
+        block += f"**akane:** {reply_text}\n\n"
+
+        # Check if we need a section header for this conv_label
+        need_header = True
+        if filepath.exists():
+            existing = filepath.read_text(encoding="utf-8")
+            if f"## {conv_label}" in existing:
+                need_header = False
+        else:
+            existing = ""
+
+        with filepath.open("a", encoding="utf-8") as f:
+            if need_header:
+                if existing and not existing.endswith("\n"):
+                    f.write("\n")
+                f.write(f"## {conv_label}\n")
+            f.write(block)
+    except Exception:  # noqa: BLE001
+        logger.warning("failed to write markdown log", exc_info=True)
+
+
 @app.post("/v1/messages")
 def post_message(payload: MessageRequest):
+    session_parts = _parse_session_key(payload.session_key)
+    guild = session_parts.get("guild", "global")
+    user_id = session_parts.get("user", "")
+
+    # 1. Load conversation history from Redis
+    history = _load_history(guild)
+
+    # 2. Build messages with history + new user message
+    messages = history + [{"role": "user", "content": payload.text}]
+
     adapter = CodexAppServerAdapter(
         base_url=settings.codex_base_url,
         api_path=settings.codex_api_path,
@@ -84,7 +225,7 @@ def post_message(payload: MessageRequest):
         timeout_sec=settings.llm_total_timeout_sec,
     )
     model_req = ModelRequest(
-        messages=[{"role": "user", "content": payload.text}],
+        messages=messages,
         system_prompt="You are akane. Reply concisely and helpfully.",
         model=(settings.llm_model or None),
     )
@@ -93,6 +234,13 @@ def post_message(payload: MessageRequest):
         reply_text = model_res.final_text or "(empty response)"
     except Exception as exc:  # noqa: BLE001
         reply_text = f"provider error: {exc}"
+
+    # 3. Save user message and assistant reply to Redis
+    _save_history(guild, "user", payload.text, user_id)
+    _save_history(guild, "assistant", reply_text)
+
+    # 4. Append to Markdown log
+    _append_markdown_log(session_parts, payload.text, reply_text)
 
     return {
         "status": "ok",
