@@ -23,7 +23,7 @@ services:
 
   akane-api:
     environment:
-      - AKANE_CODEX_BASE_URL=ws://codex-app-server:4000
+      - AKANE_CODEX_BASE_URL=${AKANE_CODEX_BASE_URL:-ws://codex-app-server:4000}
     depends_on:
       postgres:
         condition: service_healthy

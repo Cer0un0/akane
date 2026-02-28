@@ -33,7 +33,7 @@ cp .env.example .env
 # AKANE_BOT_TOKEN=...
 # POSTGRES_PASSWORD=...
 # AKANE_CODEX_API_TOKEN=...   # APIキー方式を使う場合のみ
-# AKANE_CODEX_BASE_URL は vps overlay が ws://codex-app-server:4000 に上書き
+# AKANE_CODEX_BASE_URL 未設定時は vps overlay が ws://codex-app-server:4000 を使う
 docker compose -f docker-compose.yml -f docker-compose.vps.yml -f docker-compose.prod.yml up -d --build
 ```
 
