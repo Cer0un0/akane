@@ -95,7 +95,9 @@ async def on_ready():
 async def on_message(message: discord.Message):
     if message.author.bot or client.user is None:
         return
-    if client.user not in message.mentions:
+    in_thread = isinstance(message.channel, discord.Thread)
+    mentioned = client.user in message.mentions
+    if not in_thread and not mentioned:
         return
 
     session_key = build_session_key(message)
