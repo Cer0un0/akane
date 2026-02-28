@@ -6,7 +6,6 @@ dependencies = [
   "arq>=0.26.0",
   "pydantic-settings>=2.7.0",
   "redis>=5.2.0",
-  "sentence-transformers>=3.4.0",
   "akane-core",
   "akane-providers",
 ]

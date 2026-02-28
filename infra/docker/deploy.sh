@@ -9,8 +9,8 @@ OVERLAY="${1:-docker-compose.vps.yml}"
 echo "==> git pull"
 git -C ../.. pull
 
-echo "==> docker builder prune (keeping last 24h)"
-docker builder prune -f --filter "until=24h" || true
+echo "==> docker builder prune"
+docker builder prune -f || true
 
 echo "==> docker compose down"
 docker compose down
