@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     conv_history_ttl_sec: int = 86400
     memory_dir: str = "/workspace/memory"
     soul_path: str = "/workspace/SOUL.md"
+    heartbeat_path: str = "/workspace/HEARTBEAT.md"
     timezone: str = "Asia/Tokyo"
 
 
@@ -326,6 +327,58 @@ def post_message(payload: MessageRequest):
         "mode": "sync",
         "tool_events": [],
         "trace_id": f"tr_{uuid4().hex[:12]}",
+    }
+
+
+def _load_heartbeat() -> str:
+    """Read HEARTBEAT.md from disk; return empty string if missing."""
+    hb_file = Path(settings.heartbeat_path)
+    try:
+        if hb_file.is_file():
+            return hb_file.read_text(encoding="utf-8").strip()
+    except Exception:  # noqa: BLE001
+        logger.warning("failed to read HEARTBEAT.md", exc_info=True)
+    return ""
+
+
+@app.post("/v1/heartbeat")
+def post_heartbeat():
+    heartbeat_content = _load_heartbeat()
+    if not heartbeat_content:
+        return {"status": "skipped", "reason": "HEARTBEAT.md is empty or missing"}
+
+    soul = _load_soul()
+    prompt = (
+        f"{soul}\n\n---\n"
+        "You are running a periodic heartbeat check. "
+        "Review the following HEARTBEAT.md checklist and execute it.\n"
+        "If everything is fine, respond with just: HEARTBEAT_OK\n"
+        "If there is something to report, describe it concisely.\n\n"
+        f"## HEARTBEAT.md\n\n{heartbeat_content}"
+    )
+
+    adapter = CodexAppServerAdapter(
+        base_url=settings.codex_base_url,
+        api_path=settings.codex_api_path,
+        token=settings.codex_api_token,
+        timeout_sec=settings.llm_total_timeout_sec,
+    )
+    model_req = ModelRequest(
+        messages=[{"role": "user", "content": prompt}],
+        system_prompt=soul,
+        model=(settings.llm_model or None),
+    )
+    try:
+        model_res = adapter.generate(model_req)
+        reply_text = model_res.final_text or ""
+    except Exception as exc:  # noqa: BLE001
+        reply_text = f"heartbeat error: {exc}"
+
+    is_ok = "HEARTBEAT_OK" in reply_text
+    return {
+        "status": "ok" if is_ok else "alert",
+        "reply_text": reply_text.strip(),
+        "suppressed": is_ok,
     }
 
 
