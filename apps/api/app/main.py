@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     llm_model: str = ""
     llm_total_timeout_sec: float = 20.0
     conv_history_size: int = 20
+    conv_active_window: int = 6
     conv_history_ttl_sec: int = 86400
     memory_dir: str = "/workspace/memory"
     soul_path: str = "/workspace/SOUL.md"
@@ -257,7 +258,18 @@ def _load_soul() -> str:
     return content or _DEFAULT_SOUL
 
 
-def _build_system_prompt() -> str:
+_HISTORY_CONTEXT_INSTRUCTION = (
+    "\n\n---\n"
+    "## 会話の背景コンテキスト\n"
+    "以下は過去の会話ログ。参考情報として提供されている。\n"
+    "- 直接引用したり繰り返したりしない\n"
+    "- 前の話題を自分から持ち出さない。ユーザーが触れた場合のみ応じる\n"
+    "- 過去の言い回しやパターンをコピーしない\n"
+    "- 今のメッセージに集中して新鮮に反応する\n\n"
+)
+
+
+def _build_system_prompt(older_history: list[dict] | None = None) -> str:
     """Assemble the system prompt from workspace MD files + meta-instructions."""
     sections: list[str] = []
 
@@ -272,7 +284,18 @@ def _build_system_prompt() -> str:
         if content:
             sections.append(f"<!-- {filename} -->\n{content}")
 
-    return "\n\n".join(sections) + _WS_UPDATE_INSTRUCTION
+    prompt = "\n\n".join(sections)
+
+    # Inject older history as background context (not active conversation)
+    if older_history:
+        lines: list[str] = []
+        for msg in older_history:
+            role = "ユーザー" if msg["role"] == "user" else "あかね"
+            lines.append(f"{role}: {msg['content']}")
+        prompt += _HISTORY_CONTEXT_INSTRUCTION + "\n".join(lines)
+
+    prompt += _WS_UPDATE_INSTRUCTION
+    return prompt
 
 
 _TRAILING_CHAT_RE = re.compile(
@@ -394,10 +417,18 @@ def post_message(payload: MessageRequest):
     user_id = session_parts.get("user", "")
 
     # 1. Load conversation history from Redis
-    history = _load_history(guild)
+    full_history = _load_history(guild)
 
-    # 2. Build messages with history + new user message
-    messages = history + [{"role": "user", "content": payload.text}]
+    # 2. Split into active window (messages array) and older context (system prompt)
+    window = settings.conv_active_window
+    if len(full_history) > window:
+        older_history = full_history[:-window]
+        active_history = full_history[-window:]
+    else:
+        older_history = None
+        active_history = full_history
+
+    messages = active_history + [{"role": "user", "content": payload.text}]
 
     adapter = CodexAppServerAdapter(
         base_url=settings.codex_base_url,
@@ -407,7 +438,7 @@ def post_message(payload: MessageRequest):
     )
     model_req = ModelRequest(
         messages=messages,
-        system_prompt=_build_system_prompt(),
+        system_prompt=_build_system_prompt(older_history),
         model=(settings.llm_model or None),
     )
     try:
